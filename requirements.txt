@@ -1,6 +1,6 @@
 streamlit
 yt-dlp
-moviepy==1.0.3
+moviepy==2.1.2
 pillow
 numpy
 imageio-ffmpeg
