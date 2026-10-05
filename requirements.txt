@@ -1,7 +1,6 @@
 streamlit
 yt-dlp
 moviepy==1.0.3
-pillow==9.5.0
-numpy==1.26.4
+pillow
+numpy
 imageio-ffmpeg
-opencv-python-headless
