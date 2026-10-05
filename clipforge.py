@@ -21,18 +21,19 @@ def transcribe(p):
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="cpu", compute_type="int8")
         segs, _ = model.transcribe(p, word_timestamps=True, beam_size=1, vad_filter=True)
-        out = []
+        out=[]
         for s in segs:
             if s.words:
                 for w in s.words:
                     if w.word.strip():
                         out.append((w.word.strip(), float(w.start), float(w.end)))
             else:
-                out.append((s.text.strip(), float(s.start), float(s.end)))
-        return out
+                if s.text.strip():
+                    out.append((s.text.strip(), float(s.start), float(s.end)))
+        return out if out else [("VIRAL CLIP", 0, 30)]
     except Exception as e:
         print(e)
-        return [("TINY BAG THAT I CLIP ONTO MY BIG BAG", 0, 10)]
+        return [("VIRAL CLIP", 0, 30)]
 
 def make_ass(words, cs, ce, path):
     head = """[Script Info]
@@ -48,8 +49,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def f(t):
         h=int(t//3600); m=int((t%3600)//60); s=int(t%60); c=int((t*100)%100)
         return f"{h}:{m:02d}:{s:02d}.{c:02d}"
-    ev=""
-    i=0
+    ev=""; i=0
     while i < len(words):
         chunk=[]; s=None; e=None
         for k in range(3):
@@ -58,28 +58,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if we<cs or ws>ce: continue
             if s is None: s=ws
             e=we; chunk.append(w)
-        if not chunk:
-            i+=1; continue
+        if not chunk: i+=1; continue
         rs=max(0,s-cs); re=max(rs+0.5,e-cs)
-        txt=" ".join(chunk).upper()
-        ev+=f"Dialogue: 0,{f(rs)},{f(re)},CapCut,,0,0,0,,{txt}\n"
+        ev+=f"Dialogue: 0,{f(rs)},{f(re)},CapCut,,0,0,0,,{' '.join(chunk).upper()}\n"
         i+=len(chunk)
     if not ev:
-        ev="Dialogue: 0,0:00:00.00,0:00:05.00,CapCut,,0,0,0,,TINY BAG THAT I CLIP ONTO MY BIG BAG\n"
+        ev="Dialogue: 0,0:00:00.00,0:00:05.00,CapCut,,0,0,0,,VIRAL MOMENT\n"
     open(path,"w",encoding="utf-8").write(head+ev)
 
-def process_video(video_path):
+def process_video(video_path, num_clips=10, clip_len=20):
     FFMPEG=get_ffmpeg()
     tmp=tempfile.mkdtemp()
     w,h,dur=get_info(video_path)
     words=transcribe(video_path)
     cw, ch, x, y = (w,h,0,0) if w<h else (int(h*9/16),h,(w-int(h*9/16))//2,0)
     clips=[]
-    clen=min(18,dur/4.5)
-    for i in range(4):
-        st=(dur/5)*(i+0.5)
-        if st+2>=dur: break
-        en=min(st+clen,dur)
+    step = dur / (num_clips + 1)
+    for i in range(num_clips):
+        st = step * (i+1)
+        if st + 5 >= dur: break
+        en = min(st + clip_len, dur)
         ass=f"{tmp}/c{i}.ass"
         make_ass(words,st,en,ass)
         out=f"{tmp}/clip_{i}.mp4"
@@ -89,15 +87,27 @@ def process_video(video_path):
         clips.append(out)
     return clips
 
-def run_clipforge_from_file(p): return process_video(p)
+def run_clipforge_from_file(p, num_clips=10, clip_len=20):
+    return process_video(p, num_clips, clip_len)
 
-def run_clipforge(url):
+def run_clipforge(url, num_clips=10, clip_len=20):
     import yt_dlp
     td=tempfile.mkdtemp()
-    opts={'format':'best[ext=mp4]/best','outtmpl':f'{td}/%(id)s.%(ext)s','quiet':True}
+    # FIXED YouTube options for Streamlit Cloud 2026
+    opts={
+        'format':'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl':f'{td}/%(id)s.%(ext)s',
+        'quiet': False,
+        'no_warnings': False,
+        'nocheckcertificate': True,
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+        'http_headers': {'User-Agent': 'Mozilla/5.0'},
+    }
+    print(f"Downloading {url}")
     with yt_dlp.YoutubeDL(opts) as y:
         y.download([url])
         for f in Path(td).glob('*.*'):
-            if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm']:
-                return process_video(str(f))
-    raise Exception("Download failed")
+            if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm','.m4v']:
+                print(f"Downloaded to {f}")
+                return process_video(str(f), num_clips, clip_len)
+    raise Exception("YouTube download failed - video may be private. Set to Unlisted and try again.")
