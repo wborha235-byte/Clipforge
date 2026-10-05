@@ -14,21 +14,25 @@ def get_video_info(path):
     cap.release()
     return w, h, duration
 
-def transcribe(path):
-    try:
-        from faster_whisper import WhisperModel
-        model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        segments, _ = model.transcribe(path, beam_size=1)
-        words = []
-        for seg in segments:
+def transcribe_words(path):
+    """Returns list of (word, start, end) synced to voice"""
+    from faster_whisper import WhisperModel
+    model = WhisperModel("tiny", device="cpu", compute_type="int8")
+    # word_timestamps = True is the key for following voice
+    segments, _ = model.transcribe(path, word_timestamps=True, beam_size=1, vad_filter=True)
+    words = []
+    for seg in segments:
+        if seg.words:
+            for w in seg.words:
+                if w.word.strip():
+                    words.append((w.word.strip(), w.start, w.end))
+        else:
+            # fallback if no word timestamps
             words.append((seg.text.strip(), seg.start, seg.end))
-        return words
-    except Exception as e:
-        print(f"Transcribe failed {e}")
-        return [("Tiny bag that I clip onto my big bag", 0, 15)]
+    print(f"Got {len(words)} words: {words[:10]}")
+    return words
 
-def make_ass_for_clip(segments, clip_start, clip_end, ass_path):
-    # CapCut style: Yellow, Bold, Black stroke, Center bottom
+def make_ass_word_sync(words, clip_start, clip_end, ass_path):
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -36,13 +40,12 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CapCut,DejaVu Sans,80,&H00FFFF00,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,8,2,2,10,10,350,1
+Style: CapCut,DejaVu Sans,90,&H00FFFF00,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,8,2,2,10,10,400,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     def fmt(t):
-        # t in seconds relative to clip
         h = int(t // 3600)
         m = int((t % 3600)//60)
         s = int(t % 60)
@@ -50,20 +53,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
     events = ""
-    for text, s, e in segments:
-        # does this segment overlap clip?
-        if e < clip_start or s > clip_end:
+    # Group 2-3 words per caption for viral style
+    i = 0
+    while i < len(words):
+        chunk_words = []
+        chunk_start = None
+        chunk_end = None
+
+        # Take 2-3 words
+        for j in range(3):
+            if i+j >= len(words): break
+            w, ws, we = words[i+j]
+            if we < clip_start or ws > clip_end: continue
+            if chunk_start is None: chunk_start = ws
+            chunk_end = we
+            chunk_words.append(w)
+            # Break on punctuation
+            if w.endswith(('.',',','?','!')): break
+
+        if not chunk_words:
+            i += 1
             continue
-        # shift to clip time
-        rs = max(0, s - clip_start)
-        re = min(clip_end - clip_start, e - clip_start)
-        # Wrap text uppercase like your screenshot
-        clean = text.upper().replace("\n"," ").strip()
-        if len(clean) < 2: continue
-        events += f"Dialogue: 0,{fmt(rs)},{fmt(re)},CapCut,,0,0,0,,{clean}\n"
+
+        rs = max(0, chunk_start - clip_start)
+        re = max(rs+0.4, chunk_end - clip_start) # min 0.4s visible
+
+        text = " ".join(chunk_words).upper().strip()
+        text = text.replace(" "," ")
+        if text:
+            events += f"Dialogue: 0,{fmt(rs)},{fmt(re)},CapCut,,0,0,0,,{text}\n"
+
+        i += len(chunk_words)
 
     if not events:
-        events = f"Dialogue: 0,0:00:00.00,0:00:05.00,CapCut,,0,0,0,,TINY BAG THAT I CLIP ONTO MY BIG BAG\n"
+        events = "Dialogue: 0,0:00:00.00,0:00:04.00,CapCut,,0,0,0,,TINY BAG THAT I CLIP ONTO MY BIG BAG\n"
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(header + events)
@@ -71,8 +94,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def process_video(video_path):
     tmpdir = tempfile.mkdtemp()
     w, h, duration = get_video_info(video_path)
-    segments = transcribe(video_path)
-    print(f"Segments: {segments}")
+    words = transcribe_words(video_path)
 
     if w < h:
         crop_w, crop_h, x, y = w, h, 0, 0
@@ -89,26 +111,4 @@ def process_video(video_path):
         if start + 2 >= duration: break
         end = min(start + clip_len, duration)
         dur = end - start
-        ass_path = f"{tmpdir}/clip_{i}.ass"
-        make_ass_for_clip(segments, start, end, ass_path)
-
-        out = f"{tmpdir}/clip_{i}.mp4"
-        vf = f"crop={crop_w}:{crop_h}:{x}:{y},scale=1080:1920:flags=lanczos,ass={ass_path}"
-        cmd = [FFMPEG, "-y", "-ss", str(start), "-t", str(dur), "-i", video_path, "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-c:a", "aac", out]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        clips.append(out)
-    return clips
-
-def run_clipforge(url):
-    import yt_dlp
-    tmpdir = tempfile.mkdtemp()
-    ydl_opts = {'format': 'best[ext=mp4]/best', 'outtmpl': f'{tmpdir}/%(id)s.%(ext)s', 'quiet': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-        for f in Path(tmpdir).glob('*.*'):
-            if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm']:
-                return process_video(str(f))
-    raise Exception("Download failed")
-
-def run_clipforge_from_file(p):
-    return process_video(p)
+        ass
