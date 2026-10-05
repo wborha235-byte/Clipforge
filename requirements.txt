@@ -1,8 +1,8 @@
-streamlit==1.39.0
-yt-dlp==2024.8.6
-faster-whisper==0.10.0
-mediapipe==0.10.14
+streamlit
+yt-dlp
+faster-whisper
+mediapipe==0.10.33
 moviepy==1.0.3
-opencv-python-headless==4.9.0.80
-numpy==1.26.4
-imageio-ffmpeg==0.5.1
+opencv-python-headless
+numpy
+imageio-ffmpeg
