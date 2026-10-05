@@ -1,114 +1,103 @@
 import os, tempfile, subprocess
 from pathlib import Path
-import imageio_ffmpeg
-FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
-def get_video_info(path):
+def get_ffmpeg():
+    import imageio_ffmpeg
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+def get_info(p):
     import cv2
-    cap = cv2.VideoCapture(path)
+    cap = cv2.VideoCapture(p)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 24
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = frames / fps if fps else 30
+    dur = frames / fps if fps else 30.0
     cap.release()
-    return w, h, duration
+    return w, h, dur
 
-def transcribe_words(path):
-    """Returns list of (word, start, end) synced to voice"""
-    from faster_whisper import WhisperModel
-    model = WhisperModel("tiny", device="cpu", compute_type="int8")
-    # word_timestamps = True is the key for following voice
-    segments, _ = model.transcribe(path, word_timestamps=True, beam_size=1, vad_filter=True)
-    words = []
-    for seg in segments:
-        if seg.words:
-            for w in seg.words:
-                if w.word.strip():
-                    words.append((w.word.strip(), w.start, w.end))
-        else:
-            # fallback if no word timestamps
-            words.append((seg.text.strip(), seg.start, seg.end))
-    print(f"Got {len(words)} words: {words[:10]}")
-    return words
+def transcribe(p):
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        segs, _ = model.transcribe(p, word_timestamps=True, beam_size=1, vad_filter=True)
+        out = []
+        for s in segs:
+            if s.words:
+                for w in s.words:
+                    if w.word.strip():
+                        out.append((w.word.strip(), float(w.start), float(w.end)))
+            else:
+                out.append((s.text.strip(), float(s.start), float(s.end)))
+        return out
+    except Exception as e:
+        print(e)
+        return [("TINY BAG THAT I CLIP ONTO MY BIG BAG", 0, 10)]
 
-def make_ass_word_sync(words, clip_start, clip_end, ass_path):
-    header = """[Script Info]
+def make_ass(words, cs, ce, path):
+    head = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
-
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CapCut,DejaVu Sans,90,&H00FFFF00,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,8,2,2,10,10,400,1
-
+Style: CapCut,DejaVu Sans,85,&H00FFFF00,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,10,2,2,10,10,400,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    def fmt(t):
-        h = int(t // 3600)
-        m = int((t % 3600)//60)
-        s = int(t % 60)
-        cs = int((t*100)%100)
-        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-
-    events = ""
-    # Group 2-3 words per caption for viral style
-    i = 0
+    def f(t):
+        h=int(t//3600); m=int((t%3600)//60); s=int(t%60); c=int((t*100)%100)
+        return f"{h}:{m:02d}:{s:02d}.{c:02d}"
+    ev=""
+    i=0
     while i < len(words):
-        chunk_words = []
-        chunk_start = None
-        chunk_end = None
-
-        # Take 2-3 words
-        for j in range(3):
-            if i+j >= len(words): break
-            w, ws, we = words[i+j]
-            if we < clip_start or ws > clip_end: continue
-            if chunk_start is None: chunk_start = ws
-            chunk_end = we
-            chunk_words.append(w)
-            # Break on punctuation
-            if w.endswith(('.',',','?','!')): break
-
-        if not chunk_words:
-            i += 1
-            continue
-
-        rs = max(0, chunk_start - clip_start)
-        re = max(rs+0.4, chunk_end - clip_start) # min 0.4s visible
-
-        text = " ".join(chunk_words).upper().strip()
-        text = text.replace(" "," ")
-        if text:
-            events += f"Dialogue: 0,{fmt(rs)},{fmt(re)},CapCut,,0,0,0,,{text}\n"
-
-        i += len(chunk_words)
-
-    if not events:
-        events = "Dialogue: 0,0:00:00.00,0:00:04.00,CapCut,,0,0,0,,TINY BAG THAT I CLIP ONTO MY BIG BAG\n"
-
-    with open(ass_path, "w", encoding="utf-8") as f:
-        f.write(header + events)
+        chunk=[]; s=None; e=None
+        for k in range(3):
+            if i+k>=len(words): break
+            w,ws,we=words[i+k]
+            if we<cs or ws>ce: continue
+            if s is None: s=ws
+            e=we; chunk.append(w)
+        if not chunk:
+            i+=1; continue
+        rs=max(0,s-cs); re=max(rs+0.5,e-cs)
+        txt=" ".join(chunk).upper()
+        ev+=f"Dialogue: 0,{f(rs)},{f(re)},CapCut,,0,0,0,,{txt}\n"
+        i+=len(chunk)
+    if not ev:
+        ev="Dialogue: 0,0:00:00.00,0:00:05.00,CapCut,,0,0,0,,TINY BAG THAT I CLIP ONTO MY BIG BAG\n"
+    open(path,"w",encoding="utf-8").write(head+ev)
 
 def process_video(video_path):
-    tmpdir = tempfile.mkdtemp()
-    w, h, duration = get_video_info(video_path)
-    words = transcribe_words(video_path)
-
-    if w < h:
-        crop_w, crop_h, x, y = w, h, 0, 0
-    else:
-        crop_h = h
-        crop_w = int(h * 9/16)
-        x = (w - crop_w)//2
-        y = 0
-
-    clips = []
-    clip_len = min(20, duration/4.5)
+    FFMPEG=get_ffmpeg()
+    tmp=tempfile.mkdtemp()
+    w,h,dur=get_info(video_path)
+    words=transcribe(video_path)
+    cw, ch, x, y = (w,h,0,0) if w<h else (int(h*9/16),h,(w-int(h*9/16))//2,0)
+    clips=[]
+    clen=min(18,dur/4.5)
     for i in range(4):
-        start = (duration / 5) * (i+0.5)
-        if start + 2 >= duration: break
-        end = min(start + clip_len, duration)
-        dur = end - start
-        ass
+        st=(dur/5)*(i+0.5)
+        if st+2>=dur: break
+        en=min(st+clen,dur)
+        ass=f"{tmp}/c{i}.ass"
+        make_ass(words,st,en,ass)
+        out=f"{tmp}/clip_{i}.mp4"
+        vf=f"crop={cw}:{ch}:{x}:{y},scale=1080:1920:flags=lanczos,ass={ass}"
+        cmd=[FFMPEG,"-y","-ss",str(st),"-t",str(en-st),"-i",video_path,"-vf",vf,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac",out]
+        subprocess.run(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+        clips.append(out)
+    return clips
+
+def run_clipforge_from_file(p): return process_video(p)
+
+def run_clipforge(url):
+    import yt_dlp
+    td=tempfile.mkdtemp()
+    opts={'format':'best[ext=mp4]/best','outtmpl':f'{td}/%(id)s.%(ext)s','quiet':True}
+    with yt_dlp.YoutubeDL(opts) as y:
+        y.download([url])
+        for f in Path(td).glob('*.*'):
+            if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm']:
+                return process_video(str(f))
+    raise Exception("Download failed")
