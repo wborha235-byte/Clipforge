@@ -1,0 +1,8 @@
+streamlit
+yt-dlp
+faster-whisper
+mediapipe
+moviepy==1.0.3
+opencv-python-headless
+numpy
+imageio-ffmpeg
