@@ -1,18 +1,9 @@
-import os, re, random
+import os, re, tempfile
 from pathlib import Path
 import yt_dlp
 from faster_whisper import WhisperModel
-import cv2
-import mediapipe as mp
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, VideoClip
 import numpy as np
-
-OUTPUT_DIR = Path("outputs")
-OUTPUT_DIR.mkdir(exist_ok=True)
-
-print("Loading Whisper small...")
-whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
-mp_face = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+# cv2 and mediapipe imported inside functions to avoid Streamlit crash
 
 HOOK_WORDS = ["secret","stop","never","how to","mistake","truth","why","don't","most people","here's","watch this","you should"]
 
