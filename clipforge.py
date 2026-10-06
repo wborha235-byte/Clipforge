@@ -87,25 +87,33 @@ def process_video(video_path, num_clips=10, clip_len=23):
         clips.append(out)
     return clips
 
-# FIXED: Accept num_clips and clip_len
 def run_clipforge_from_file(p, num_clips=10, clip_len=20, **kwargs):
     return process_video(p, num_clips=num_clips, clip_len=clip_len)
 
 def run_clipforge(url, num_clips=10, clip_len=20, **kwargs):
     import yt_dlp
     td=tempfile.mkdtemp()
-    opts={
-        'format':'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl':f'{td}/%(id)s.%(ext)s',
-        'quiet': False,
-        'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['android']}},
-        'http_headers': {'User-Agent': 'Mozilla/5.0'},
-    }
-    print(f"Downloading {url}")
-    with yt_dlp.YoutubeDL(opts) as y:
-        y.download([url])
-        for f in Path(td).glob('*.*'):
-            if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm','.m4v']:
-                return process_video(str(f), num_clips=num_clips, clip_len=clip_len)
-    raise Exception("YouTube download failed")
+    # TRY 3 different clients to bypass 403
+    clients = [['ios'], ['android'], ['web']]
+    last_err = None
+    for client in clients:
+        try:
+            opts={
+                'format':'best[ext=mp4]/best',
+                'outtmpl':f'{td}/%(id)s.%(ext)s',
+                'quiet': True,
+                'nocheckcertificate': True,
+                'extractor_args': {'youtube': {'player_client': client}},
+                'http_headers': {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'},
+            }
+            print(f"Trying client {client} for {url}")
+            with yt_dlp.YoutubeDL(opts) as y:
+                y.download([url])
+                for f in Path(td).glob('*.*'):
+                    if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm','.m4v']:
+                        return process_video(str(f), num_clips=num_clips, clip_len=clip_len)
+        except Exception as e:
+            print(f"Client {client} failed: {e}")
+            last_err = e
+            continue
+    raise Exception(f"YouTube blocked Streamlit IP (403). Fix: Download video to phone then use Upload tab. Last error: {last_err}")
