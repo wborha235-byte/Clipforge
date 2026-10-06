@@ -66,7 +66,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         ev="Dialogue: 0,0:00:00.00,0:00:05.00,CapCut,,0,0,0,,VIRAL MOMENT\n"
     open(path,"w",encoding="utf-8").write(head+ev)
 
-def process_video(video_path, num_clips=10, clip_len=20):
+def process_video(video_path, num_clips=10, clip_len=23):
     FFMPEG=get_ffmpeg()
     tmp=tempfile.mkdtemp()
     w,h,dur=get_info(video_path)
@@ -87,18 +87,17 @@ def process_video(video_path, num_clips=10, clip_len=20):
         clips.append(out)
     return clips
 
-def run_clipforge_from_file(p, num_clips=10, clip_len=20):
-    return process_video(p, num_clips, clip_len)
+# FIXED: Accept num_clips and clip_len
+def run_clipforge_from_file(p, num_clips=10, clip_len=20, **kwargs):
+    return process_video(p, num_clips=num_clips, clip_len=clip_len)
 
-def run_clipforge(url, num_clips=10, clip_len=20):
+def run_clipforge(url, num_clips=10, clip_len=20, **kwargs):
     import yt_dlp
     td=tempfile.mkdtemp()
-    # FIXED YouTube options for Streamlit Cloud 2026
     opts={
         'format':'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl':f'{td}/%(id)s.%(ext)s',
         'quiet': False,
-        'no_warnings': False,
         'nocheckcertificate': True,
         'extractor_args': {'youtube': {'player_client': ['android']}},
         'http_headers': {'User-Agent': 'Mozilla/5.0'},
@@ -108,6 +107,5 @@ def run_clipforge(url, num_clips=10, clip_len=20):
         y.download([url])
         for f in Path(td).glob('*.*'):
             if f.suffix.lower() in ['.mp4','.mov','.mkv','.webm','.m4v']:
-                print(f"Downloaded to {f}")
-                return process_video(str(f), num_clips, clip_len)
-    raise Exception("YouTube download failed - video may be private. Set to Unlisted and try again.")
+                return process_video(str(f), num_clips=num_clips, clip_len=clip_len)
+    raise Exception("YouTube download failed")
