@@ -1,3 +1,4 @@
+--upgrade
 streamlit
 yt-dlp
 pillow
