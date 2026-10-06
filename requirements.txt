@@ -1,7 +1,5 @@
-streamlit
+streamlit==1.39.0
 yt-dlp
-pillow
-numpy
 imageio-ffmpeg
-opencv-python-headless
-faster-whisper
+opencv-python-headless==4.9.0.80
+faster-whisper==0.10.0
